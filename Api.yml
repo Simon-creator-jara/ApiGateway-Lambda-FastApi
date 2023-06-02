@@ -1,0 +1,143 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Resources:
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties: 
+      Description: Prueba API
+      Code:
+          S3Bucket: codigolambdaapi
+          S3Key: codigo.zip
+      FunctionName: LambdaApi
+      Handler: codigo.handler
+      Layers: 
+        - !Ref layer
+      Role: !GetAtt RootRole.Arn
+      Runtime: python3.10
+
+  layer:
+    Type: AWS::Lambda::LayerVersion
+    Properties: 
+      CompatibleRuntimes: 
+        - python3.10
+      Content: 
+        S3Bucket: layerapi
+        S3Key: layer.zip
+      LayerName: LayerApi
+  
+  MyLayerPermission:
+    Type: AWS::Lambda::LayerVersionPermission
+    Properties:
+      Action: lambda:GetLayerVersion
+      LayerVersionArn: !Ref layer
+      Principal: "*"
+
+  RootRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: '*'
+                Resource: '*'
+
+  api:
+    Type: AWS::ApiGateway::RestApi
+    Properties: 
+      Name: apirest
+
+  recursohello:
+    Type: AWS::ApiGateway::Resource
+    Properties: 
+      ParentId: !GetAtt api.RootResourceId
+      PathPart: "{proxy+}"
+      RestApiId: !Ref api
+
+  Methodapi:
+    Type: AWS::ApiGateway::Method
+    Properties: 
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration: 
+        IntegrationHttpMethod: POST
+        IntegrationResponses: 
+          - ResponseTemplates: {"application/json":""}
+            StatusCode: 200
+        Type: AWS_PROXY
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations'
+
+      MethodResponses: 
+        -   ResponseModels: {"application/json":"Empty"}
+            StatusCode: 200
+
+      OperationName: '{proxy+}'
+      ResourceId: !Ref recursohello
+      RestApiId: !Ref api
+  
+  ApiModel:
+    Type: AWS::ApiGateway::Model
+    Properties: 
+      ContentType: 'application/json'
+      RestApiId: !Ref api
+
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: Methodapi
+    Properties:
+      Description: Lambda API Deployment
+      RestApiId: !Ref api
+  
+  ApiGatewayStage:
+      Type: AWS::ApiGateway::Stage
+      Properties:
+        DeploymentId: !Ref ApiGatewayDeployment
+        Description: Lambda API Stage v0
+        RestApiId: !Ref api
+        StageName: 'v0'
+
+  ApiGatewayIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ''
+            Effect: 'Allow'
+            Principal:
+              Service:
+                - 'apigateway.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      Path: '/'
+      Policies:
+        - PolicyName: LambdaAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action: 'lambda:*'
+                Resource: !GetAtt LambdaFunction.Arn
+
+  lambdaApiGatewayInvoke:
+    Type: "AWS::Lambda::Permission"
+    DependsOn: api
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !Ref LambdaFunction
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${api}/*/*/*"
+
+
